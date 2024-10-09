@@ -73,8 +73,13 @@ def validate_pipeline(normal_method: str, normal_output_name: str, pipeline: Pip
         directions = torch.ones_like(origins)
         pixel_area = torch.ones_like(origins[..., :1])
         camera_indices = torch.zeros_like(origins[..., :1])
+        metadata = {"directions_norm": torch.linalg.vector_norm(directions, dim=-1, keepdim=True)}
         ray_bundle = RayBundle(
-            origins=origins, directions=directions, pixel_area=pixel_area, camera_indices=camera_indices
+            origins=origins,
+            directions=directions,
+            pixel_area=pixel_area,
+            camera_indices=camera_indices,
+            metadata=metadata,
         )
         outputs = pipeline.model(ray_bundle)
         if normal_output_name not in outputs:
@@ -213,6 +218,11 @@ class ExportTSDFMesh(Exporter):
     """If using xatlas for unwrapping, the pixels per side of the texture image."""
     target_num_faces: Optional[int] = 50000
     """Target number of faces for the mesh to texture."""
+    refine_mesh_using_initial_aabb_estimate: bool = False
+    """Refine the mesh using the initial AABB estimate."""
+    refinement_epsilon: float = 1e-2
+    """Refinement epsilon for the mesh. This is the distance in meters that the refined AABB/OBB will be expanded by
+    in each direction."""
 
     def main(self) -> None:
         """Export mesh"""
@@ -233,6 +243,8 @@ class ExportTSDFMesh(Exporter):
             use_bounding_box=self.use_bounding_box,
             bounding_box_min=self.bounding_box_min,
             bounding_box_max=self.bounding_box_max,
+            refine_mesh_using_initial_aabb_estimate=self.refine_mesh_using_initial_aabb_estimate,
+            refinement_epsilon=self.refinement_epsilon,
         )
 
         # possibly
@@ -479,6 +491,8 @@ class ExportGaussianSplat(Exporter):
     Export 3D Gaussian Splatting model to a .ply
     """
 
+    output_filename: str = "splat.ply"
+    """Name of the output file."""
     obb_center: Optional[Tuple[float, float, float]] = None
     """Center of the oriented bounding box."""
     obb_rotation: Optional[Tuple[float, float, float]] = None
@@ -547,13 +561,13 @@ class ExportGaussianSplat(Exporter):
         if not self.output_dir.exists():
             self.output_dir.mkdir(parents=True)
 
-        _, pipeline, _, _ = eval_setup(self.load_config)
+        _, pipeline, _, _ = eval_setup(self.load_config, test_mode="inference")
 
         assert isinstance(pipeline.model, SplatfactoModel)
 
         model: SplatfactoModel = pipeline.model
 
-        filename = self.output_dir / "splat.ply"
+        filename = self.output_dir / self.output_filename
 
         map_to_tensors = OrderedDict()
 
@@ -620,9 +634,17 @@ class ExportGaussianSplat(Exporter):
             n_after = np.sum(select)
             if n_after < n_before:
                 CONSOLE.print(f"{n_before - n_after} NaN/Inf elements in {k}")
+        nan_count = np.sum(select) - n
+
+        # filter gaussians that have opacities < 1/255, because they are skipped in cuda rasterization
+        low_opacity_gaussians = (map_to_tensors["opacity"]).squeeze(axis=-1) < -5.5373  # logit(1/255)
+        lowopa_count = np.sum(low_opacity_gaussians)
+        select[low_opacity_gaussians] = 0
 
         if np.sum(select) < n:
-            CONSOLE.print(f"values have NaN/Inf in map_to_tensors, only export {np.sum(select)}/{n}")
+            CONSOLE.print(
+                f"{nan_count} Gaussians have NaN/Inf and {lowopa_count} have low opacity, only export {np.sum(select)}/{n}"
+            )
             for k, t in map_to_tensors.items():
                 map_to_tensors[k] = map_to_tensors[k][select]
             count = np.sum(select)
