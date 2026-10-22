@@ -23,7 +23,7 @@
     "eslint-config-prettier": "^8.5.0",
     "eslint-plugin-unused-imports": "^2.0.0",
     "leva": "^0.9.29",
-    "lodash": "^4.17.21",
+    "lodash": "^4.18.1",
     "meshline": "^2.0.4",
     "msgpack-lite": "^0.1.26",
     "msgpackr": "^1.8.5",
@@ -91,6 +91,6 @@
     "@pmmmwh/react-refresh-webpack-plugin": "^0.5.10",
     "recursive-readdir": "^2.2.3",
     "resolve-url-loader": "^5.0.0",
-    "yaml": "^2.2.2"
+    "yaml": "^2.9.1"
   }
 }
